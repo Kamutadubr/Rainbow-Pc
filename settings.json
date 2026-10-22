@@ -1,0 +1,26 @@
+{
+  "address": "BE:27:62:00:7B:E3",
+  "name": "ELK-BLEDOM",
+  "power": true,
+  "color": [
+    254,
+    250,
+    255
+  ],
+  "brightness": 100,
+  "mode": 148,
+  "speed": 100,
+  "timer_on_enabled": true,
+  "timer_on_time": "18:00",
+  "timer_off_enabled": true,
+  "timer_off_time": "02:00",
+  "timer_days_mask": 127,
+  "opacity": 80,
+  "sync_taskbar_color": true,
+  "start_with_windows": true,
+  "icon_glow": true,
+  "accent_theme": "Midnight",
+  "calib_r": 100,
+  "calib_g": 100,
+  "calib_b": 100
+}
