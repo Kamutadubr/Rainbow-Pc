@@ -94,11 +94,12 @@ class BleWorker:
         self.loop.run_forever()
 
     async def _auto_connect_loop(self):
-        await asyncio.sleep(0.3)
+        # Dá um tempo para os serviços de Bluetooth do Windows subirem no boot
+        await asyncio.sleep(2.0)
         while self._running:
             if not self.is_connected and not self.is_busy:
                 await self.try_connect()
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
 
     def trigger_reconnect(self):
         if self.loop and self.loop.is_running():
@@ -112,49 +113,46 @@ class BleWorker:
         target_addr = self.settings.get("address")
         target_name = self.settings.get("name", "LED")
 
-        # 1. TENTA CONEXÃO DIRETA PELO MAC
+        # 1. TENTA ACHAR O DISPOSITIVO DIRETAMENTE PELO ENDEREÇO SALVO
+        target_device = None
         if target_addr:
+            self.on_status_changed(f"Conectando a {target_name}...", False)
             try:
-                self.on_status_changed(f"Conectando a {target_name}...", False)
-                client = BleakClient(target_addr)
-                await client.connect(timeout=6.0)
-                if client.is_connected:
-                    self.client = client
-                    self.is_connected = True
-                    self.on_status_changed(f"Conectado: {target_name}", True)
-                    await self._on_connected_actions()
-                    self.is_busy = False
-                    return True
+                # find_device_by_address faz um scan rápido ativo procurando exatamente o MAC salvo no Windows
+                target_device = await BleakScanner.find_device_by_address(target_addr, timeout=4.0)
             except Exception:
-                pass
+                target_device = None
 
-        # 2. SCAN SE CONEXÃO DIRETA FALHAR
-        self.on_status_changed("Procurando LED...", False)
+        # 2. SE NÃO ACHOU PELO MAC, FAZ SCAN GERAL POR PREFIXOS CONHECIDOS
+        if not target_device:
+            self.on_status_changed("Procurando LED...", False)
+            try:
+                devices = await BleakScanner.discover(timeout=4.0)
+                if target_addr:
+                    for d in devices:
+                        if d.address.upper() == target_addr.upper():
+                            target_device = d
+                            break
+
+                if not target_device:
+                    for d in devices:
+                        d_name = d.name or ""
+                        if any(p in d_name for p in SUPPORTED_PREFIXES):
+                            target_device = d
+                            break
+            except Exception:
+                target_device = None
+
+        if not target_device:
+            self.on_status_changed("LED não encontrado nas proximidades", False)
+            self.is_busy = False
+            return False
+
+        # 3. CONECTA USANDO O OBJETO BLEDevice OBTIDO DO SCANNER
+        dev_name = target_device.name or target_name
+        self.on_status_changed(f"Conectando a {dev_name}...", False)
+
         try:
-            devices = await BleakScanner.discover(timeout=4.0)
-            target_device = None
-
-            if target_addr:
-                for d in devices:
-                    if d.address.upper() == target_addr.upper():
-                        target_device = d
-                        break
-
-            if not target_device:
-                for d in devices:
-                    d_name = d.name or ""
-                    if any(p in d_name for p in SUPPORTED_PREFIXES):
-                        target_device = d
-                        break
-
-            if not target_device:
-                self.on_status_changed("LED não encontrado nas proximidades", False)
-                self.is_busy = False
-                return False
-
-            dev_name = target_device.name or target_name
-            self.on_status_changed(f"Conectando a {dev_name}...", False)
-
             client = BleakClient(target_device)
             await client.connect(timeout=8.0)
 

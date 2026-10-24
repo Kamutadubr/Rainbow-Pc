@@ -911,7 +911,7 @@ class FlyoutWindow(QWidget):
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
             if enable:
-                bat_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iniciar.bat")
+                bat_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Init.bat")
                 cmd = f'"{bat_path}"'
                 winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, cmd)
             else:

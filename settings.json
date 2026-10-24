@@ -3,11 +3,11 @@
   "name": "ELK-BLEDOM",
   "power": true,
   "color": [
-    254,
-    250,
-    255
+    255,
+    0,
+    0
   ],
-  "brightness": 100,
+  "brightness": 74,
   "mode": 148,
   "speed": 100,
   "timer_on_enabled": true,
