@@ -1119,6 +1119,8 @@ class FlyoutWindow(QWidget):
     def _on_brightness_changed(self, val: int):
         self.lbl_br_val.setText(f"{val}%")
         self.ble.set_brightness(val)
+        if hasattr(self, "screen_worker") and self.screen_worker:
+            self.screen_worker.set_brightness_factor(val)
 
     def _apply_current_mode(self):
         mode_id = self.cmb_mode.currentData()
@@ -1172,10 +1174,9 @@ class FlyoutWindow(QWidget):
     def start_ambilight(self):
         if not self.is_ambilight_active:
             self.is_ambilight_active = True
-            # Garante que o brilho do LED esteja em 100% para máxima fidelidade e intensidade
-            if self.settings.get("brightness", 100) < 100:
-                self.ble.set_brightness(100)
-                self.slider_bright.setValue(100)
+            # Configura o fator de brilho baseado no slider atual
+            cur_bright = self.settings.get("brightness", 100)
+            self.screen_worker.set_brightness_factor(cur_bright)
             self.screen_worker.start()
             self.lbl_amb_status.setText("● Ativo")
             self.lbl_amb_status.setStyleSheet("color: #00E676; font-size: 11px; font-weight: 600; font-family: 'Segoe UI';")
