@@ -94,16 +94,27 @@ class BleWorker:
         self.loop.run_forever()
 
     async def _auto_connect_loop(self):
-        # Dá um tempo para os serviços de Bluetooth do Windows subirem no boot
-        await asyncio.sleep(2.0)
+        # Aguarda brevemente para que os serviços do sistema e loop estejam prontos
+        await asyncio.sleep(1.0)
         while self._running:
             if not self.is_connected and not self.is_busy:
-                await self.try_connect()
-            await asyncio.sleep(3)
+                try:
+                    await self.try_connect()
+                except Exception as e:
+                    self.is_busy = False
+                    self.on_status_changed("Aguardando Bluetooth...", False)
+            await asyncio.sleep(2.5)
 
     def trigger_reconnect(self):
         if self.loop and self.loop.is_running():
+            self.is_busy = False
             asyncio.run_coroutine_threadsafe(self.try_connect(), self.loop)
+
+    def _on_device_disconnected(self, client):
+        self.is_connected = False
+        self.is_busy = False
+        self.client = None
+        self.on_status_changed("Desconectado (sinal perdido)", False)
 
     async def try_connect(self) -> bool:
         if self.is_busy or self.is_connected:
@@ -111,56 +122,67 @@ class BleWorker:
 
         self.is_busy = True
         target_addr = self.settings.get("address")
-        target_name = self.settings.get("name", "LED")
-
-        # 1. TENTA ACHAR O DISPOSITIVO DIRETAMENTE PELO ENDEREÇO SALVO
-        target_device = None
-        if target_addr:
-            self.on_status_changed(f"Conectando a {target_name}...", False)
-            try:
-                # find_device_by_address faz um scan rápido ativo procurando exatamente o MAC salvo no Windows
-                target_device = await BleakScanner.find_device_by_address(target_addr, timeout=4.0)
-            except Exception:
-                target_device = None
-
-        # 2. SE NÃO ACHOU PELO MAC, FAZ SCAN GERAL POR PREFIXOS CONHECIDOS
-        if not target_device:
-            self.on_status_changed("Procurando LED...", False)
-            try:
-                devices = await BleakScanner.discover(timeout=4.0)
-                if target_addr:
-                    for d in devices:
-                        if d.address.upper() == target_addr.upper():
-                            target_device = d
-                            break
-
-                if not target_device:
-                    for d in devices:
-                        d_name = d.name or ""
-                        if any(p in d_name for p in SUPPORTED_PREFIXES):
-                            target_device = d
-                            break
-            except Exception:
-                target_device = None
-
-        if not target_device:
-            self.on_status_changed("LED não encontrado nas proximidades", False)
-            self.is_busy = False
-            return False
-
-        # 3. CONECTA USANDO O OBJETO BLEDevice OBTIDO DO SCANNER
-        dev_name = target_device.name or target_name
-        self.on_status_changed(f"Conectando a {dev_name}...", False)
+        target_name = self.settings.get("name", "ELK-BLEDOM")
 
         try:
-            client = BleakClient(target_device)
-            await client.connect(timeout=8.0)
+            self.on_status_changed(f"Conectando a {target_name}...", False)
+
+            # Scanner contínuo com detecção ativa
+            target_device = None
+            found_event = asyncio.Event()
+
+            def detection_callback(dev, adv_data):
+                nonlocal target_device
+                d_addr = dev.address.upper() if dev.address else ""
+                d_name = dev.name or adv_data.local_name or ""
+                
+                # Match prioritário pelo MAC salvo
+                if target_addr and d_addr == target_addr.upper():
+                    target_device = dev
+                    found_event.set()
+                    return
+
+                # Match secundário pelo prefixo do modelo se não houver MAC ou se trocou
+                if not target_device and any(p in d_name for p in SUPPORTED_PREFIXES):
+                    target_device = dev
+                    found_event.set()
+
+            scanner = BleakScanner(detection_callback=detection_callback)
+            try:
+                await scanner.start()
+                # Aguarda até 5 segundos para o dispositivo ser ouvido no rádio BLE
+                try:
+                    await asyncio.wait_for(found_event.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+            except Exception:
+                # Caso a pilha do Windows ainda esteja subindo ou dando erro transitório
+                target_device = None
+            finally:
+                try:
+                    await scanner.stop()
+                except Exception:
+                    pass
+
+            if not target_device:
+                self.on_status_changed("Procurando LED nas proximidades...", False)
+                self.is_busy = False
+                return False
+
+            # Conecta diretamente usando o BLEDevice vivo descoberto
+            dev_name = target_device.name or target_name
+            self.on_status_changed(f"Conectando a {dev_name}...", False)
+
+            client = BleakClient(target_device, disconnected_callback=self._on_device_disconnected)
+            await asyncio.wait_for(client.connect(timeout=8.0), timeout=9.0)
 
             if client.is_connected:
                 self.client = client
                 self.is_connected = True
                 self.settings["address"] = target_device.address
-                self.settings["name"] = dev_name
+                if target_device.name:
+                    self.settings["name"] = target_device.name
+                    dev_name = target_device.name
                 save_settings(self.settings)
 
                 self.on_status_changed(f"Conectado: {dev_name}", True)

@@ -1,17 +1,17 @@
 {
   "address": "BE:27:62:00:7B:E3",
   "name": "ELK-BLEDOM",
-  "power": true,
+  "power": false,
   "color": [
     255,
     0,
     0
   ],
-  "brightness": 74,
+  "brightness": 40,
   "mode": 148,
   "speed": 100,
   "timer_on_enabled": true,
-  "timer_on_time": "18:00",
+  "timer_on_time": "19:00",
   "timer_off_enabled": true,
   "timer_off_time": "02:00",
   "timer_days_mask": 127,

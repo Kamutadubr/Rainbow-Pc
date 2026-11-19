@@ -298,7 +298,8 @@ class FlyoutWindow(QWidget):
         self.lbl_title = QLabel("Lotus Lantern")
         self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 15px; font-weight: 700; font-family: 'Segoe UI Variable Display', 'Segoe UI', sans-serif; letter-spacing: -0.2px;")
 
-        self.lbl_status = QLabel("Conectando ao LED...")
+        init_name = self.settings.get("name", "ELK-BLEDOM")
+        self.lbl_status = QLabel(f"Conectando a {init_name}...")
         self.lbl_status.setStyleSheet("color: #8C8E9A; font-size: 11px; font-family: 'Segoe UI', sans-serif; font-weight: 500;")
         self.lbl_status.setCursor(Qt.PointingHandCursor)
         self.lbl_status.setToolTip("Clique para forçar reconexão")
