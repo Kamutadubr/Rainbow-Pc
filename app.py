@@ -1172,6 +1172,10 @@ class FlyoutWindow(QWidget):
     def start_ambilight(self):
         if not self.is_ambilight_active:
             self.is_ambilight_active = True
+            # Garante que o brilho do LED esteja em 100% para máxima fidelidade e intensidade
+            if self.settings.get("brightness", 100) < 100:
+                self.ble.set_brightness(100)
+                self.slider_bright.setValue(100)
             self.screen_worker.start()
             self.lbl_amb_status.setText("● Ativo")
             self.lbl_amb_status.setStyleSheet("color: #00E676; font-size: 11px; font-weight: 600; font-family: 'Segoe UI';")
