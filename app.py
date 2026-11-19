@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from ble_controller import BleWorker, load_settings, save_settings
 from color_wheel import ColorWheel
+from screen_sync import ScreenSyncWorker
 from theme_helper import get_taskbar_color
 
 # Paleta de Cores com offsets calibrados para compensar a física da fita LED
@@ -267,6 +268,17 @@ class FlyoutWindow(QWidget):
         self._sched_timer.timeout.connect(self._check_local_schedule)
         self._sched_timer.start()
         self._last_triggered_minute = ""
+
+        # Worker de sincronização de tela (Ambilight)
+        self.screen_worker = ScreenSyncWorker(
+            fps=self.settings.get("ambilight_fps", 18),
+            smoothing=self.settings.get("ambilight_smoothing", 0.30),
+            deadband=self.settings.get("ambilight_deadband", 4),
+            mode=self.settings.get("ambilight_mode", "average"),
+            parent=self
+        )
+        self.screen_worker.colorSampled.connect(self._on_ambilight_color)
+        self.is_ambilight_active = False
 
     def _init_ui(self):
         root_layout = QVBoxLayout(self)
@@ -574,6 +586,58 @@ class FlyoutWindow(QWidget):
         self.slider_speed.setStyleSheet(self._slider_style())
         self.slider_speed.valueChanged.connect(self._on_speed_changed)
         mode_vbox.addWidget(self.slider_speed)
+
+        # Seção Ambilight (Sincronização de Tela)
+        amb_frame = QFrame()
+        amb_frame.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                padding: 10px;
+            }
+        """)
+        amb_vbox = QVBoxLayout(amb_frame)
+        amb_vbox.setContentsMargins(8, 8, 8, 8)
+        amb_vbox.setSpacing(8)
+
+        amb_header = QHBoxLayout()
+        lbl_amb_title = QLabel("Ambilight (Sincronizar Tela)")
+        lbl_amb_title.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: 600; font-family: 'Segoe UI';")
+        self.lbl_amb_status = QLabel("Desativado")
+        self.lbl_amb_status.setStyleSheet("color: #8C8E9A; font-size: 11px; font-family: 'Segoe UI';")
+
+        amb_header.addWidget(lbl_amb_title)
+        amb_header.addStretch()
+        amb_header.addWidget(self.lbl_amb_status)
+        amb_vbox.addLayout(amb_header)
+
+        self.btn_toggle_amb = QPushButton("Iniciar Ambilight")
+        self.btn_toggle_amb.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_amb.setStyleSheet("""
+            QPushButton {
+                background: rgba(79, 128, 255, 0.2);
+                color: #82AAFF;
+                border: 1px solid rgba(79, 128, 255, 0.4);
+                border-radius: 8px;
+                padding: 7px 14px;
+                font-size: 12px;
+                font-weight: 600;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QPushButton:hover {
+                background: rgba(79, 128, 255, 0.35);
+                border: 1px solid rgba(79, 128, 255, 0.6);
+                color: #FFFFFF;
+            }
+            QPushButton:pressed {
+                background: rgba(79, 128, 255, 0.15);
+            }
+        """)
+        self.btn_toggle_amb.clicked.connect(self._toggle_ambilight)
+        amb_vbox.addWidget(self.btn_toggle_amb)
+
+        mode_vbox.addWidget(amb_frame)
 
         mode_vbox.addStretch()
         self.stack.addWidget(tab_mode_widget)
@@ -1099,6 +1163,68 @@ class FlyoutWindow(QWidget):
             }
         """)
 
+    def _toggle_ambilight(self):
+        if self.is_ambilight_active:
+            self.stop_ambilight()
+        else:
+            self.start_ambilight()
+
+    def start_ambilight(self):
+        if not self.is_ambilight_active:
+            self.is_ambilight_active = True
+            self.screen_worker.start()
+            self.lbl_amb_status.setText("● Ativo")
+            self.lbl_amb_status.setStyleSheet("color: #00E676; font-size: 11px; font-weight: 600; font-family: 'Segoe UI';")
+            self.btn_toggle_amb.setText("Pausar Ambilight")
+            self.btn_toggle_amb.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255, 59, 48, 0.2);
+                    color: #FF5252;
+                    border: 1px solid rgba(255, 59, 48, 0.4);
+                    border-radius: 8px;
+                    padding: 7px 14px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    font-family: 'Segoe UI', sans-serif;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 59, 48, 0.35);
+                    border: 1px solid rgba(255, 59, 48, 0.6);
+                    color: #FFFFFF;
+                }
+            """)
+
+    def stop_ambilight(self):
+        if self.is_ambilight_active:
+            self.is_ambilight_active = False
+            self.screen_worker.stop()
+            self.lbl_amb_status.setText("Desativado")
+            self.lbl_amb_status.setStyleSheet("color: #8C8E9A; font-size: 11px; font-family: 'Segoe UI';")
+            self.btn_toggle_amb.setText("Iniciar Ambilight")
+            self.btn_toggle_amb.setStyleSheet("""
+                QPushButton {
+                    background: rgba(79, 128, 255, 0.2);
+                    color: #82AAFF;
+                    border: 1px solid rgba(79, 128, 255, 0.4);
+                    border-radius: 8px;
+                    padding: 7px 14px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    font-family: 'Segoe UI', sans-serif;
+                }
+                QPushButton:hover {
+                    background: rgba(79, 128, 255, 0.35);
+                    border: 1px solid rgba(79, 128, 255, 0.6);
+                    color: #FFFFFF;
+                }
+            """)
+
+    def _on_ambilight_color(self, r: int, g: int, b: int):
+        if not self.is_ambilight_active:
+            return
+        # Despacha diretamente pelo controlador BLE aplicando a calibração de hardware salva
+        self.ble.set_color(r, g, b)
+
     def _on_speed_changed(self, val: int):
         self.ble.set_speed(val)
 
@@ -1406,6 +1532,8 @@ def main():
     menu = QMenu()
     act_open = menu.addAction("Abrir Painel")
     act_open.triggered.connect(flyout.toggle_popup)
+    act_amb = menu.addAction("Alternar Ambilight")
+    act_amb.triggered.connect(flyout._toggle_ambilight)
     act_reconnect = menu.addAction("Reconectar LED")
     act_reconnect.triggered.connect(lambda: ble_worker.trigger_reconnect())
     menu.addSeparator()
