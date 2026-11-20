@@ -1,4 +1,5 @@
 import time
+import colorsys
 from typing import Optional
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QGuiApplication, Qt
@@ -7,27 +8,30 @@ class ScreenSyncWorker(QThread):
     """
     Worker que roda em thread dedicada para capturar a tela via Qt Desktop Duplication.
     
-    Aplica:
-    1. Amostragem inteligente das bordas da tela (onde a luz projeta na parede).
-    2. Subtração do componente acromático comum (remove a contaminação de branco/cinza que torna o vermelho rosa).
-    3. Normalização pelo pico: Estica o canal mais forte até 255 multiplicado pelo slider de brilho do usuário.
-    4. Suavização EMA e filtro de deadband (sem saturação de BLE).
+    Aprimoramentos de Fluidez:
+    1. Amostragem combinada (bordas com 70% de peso + centro com 30% de peso) para evitar
+       que barras de abas e cantos do Windows sequestrem a cor real da cena.
+    2. Curva contínua de saturação e brilho HSV (sem degraus secos ou saltos bruscos).
+    3. Normalização proporcional de pico (escala com o slider de brilho do usuário).
+    4. Suavização EMA como ÚLTIMA etapa de saída, garantindo transições aveludadas e orgânicas.
     """
     colorSampled = Signal(int, int, int)
 
-    def __init__(self, fps: int = 18, smoothing: float = 0.28, deadband: int = 4, mode: str = "borders", parent: Optional[QObject] = None):
+    def __init__(self, fps: int = 18, smoothing: float = 0.22, deadband: int = 3, mode: str = "smart", parent: Optional[QObject] = None):
         super().__init__(parent)
         self.fps = max(10, min(25, fps))
         self.interval = 1.0 / self.fps
+        # Fator de suavização EMA (0.22 dá uma transição muito aveludada sem delay perceptível)
         self.smoothing = max(0.05, min(0.9, smoothing))
         self.deadband = deadband  # Limiar mínimo de variação delta RGB
-        self.sample_mode = mode   # "borders" ou "average"
+        self.sample_mode = mode   # "smart" (bordas + centro ponderado) ou "borders" ou "average"
         self.brightness_factor = 1.0  # Controlado pelo slider de brilho (0.0 a 1.0)
 
         self._running = False
-        self._cur_r = 0.0
-        self._cur_g = 0.0
-        self._cur_b = 0.0
+        # O estado EMA agora guarda a cor FINAL pós-processamento!
+        self._target_r = 0.0
+        self._target_g = 0.0
+        self._target_b = 0.0
         self._last_sent_rgb = (-1, -1, -1)
 
     def set_brightness_factor(self, percent: int):
@@ -49,52 +53,42 @@ class ScreenSyncWorker(QThread):
         self._running = False
         self.wait(1500)
 
-    def _process_color_and_brightness(self, r: float, g: float, b: float) -> tuple[int, int, int]:
+    def _calculate_instant_color(self, r: float, g: float, b: float) -> tuple[float, float, float]:
         """
-        1. Remove o branco parasita que dilui o vermelho em rosa.
-        2. Normaliza multiplicando igualmente a média para que a cor atinja o pico máximo de brilho.
-        3. Aplica o fator do slider de brilho.
+        Calcula a cor instantânea desejada usando curvas contínuas (sem 'ifs' que causam saltos secos).
         """
-        max_c = max(r, g, b)
-        min_c = min(r, g, b)
+        max_raw = max(r, g, b)
+        if max_raw < 5.0:
+            return 0.0, 0.0, 0.0
 
-        # Se for tela escura / quase preta, desliga os LEDs para preto verdadeiro
-        if max_c < 4.0:
-            return 0, 0, 0
+        # Converte para espaço perceptual HSV
+        h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
 
-        chroma = max_c - min_c
+        # 1. Curva contínua de Saturação (curva suave de potência):
+        # Transforma cores diluídas da tela em tons vivos na parede sem estourar
+        s_curved = min(1.0, (s ** 0.45) * 1.40) if s > 0.02 else 0.0
 
-        # Se a tela for predominantemente monocromática/branca (ex: Bloco de Notas ou Word em tela cheia)
-        if chroma < 8.0:
-            scale = 255.0 / max_c
-            r_out = r * scale
-            g_out = g * scale
-            b_out = b * scale
-        else:
-            # Há uma cor dominante presente (ex: janela vermelha, azul, etc).
-            # O que transforma Vermelho em Rosa na física do LED é ter Verde e Azul misturados!
-            # Subtraímos 92% da base branca (min_c) para deixar apenas os fótons puros da cor dominante.
-            white_base = min_c * 0.92
-            r_pure = max(0.0, r - white_base)
-            g_pure = max(0.0, g - white_base)
-            b_pure = max(0.0, b - white_base)
+        # 2. Curva de Dinâmica de Brilho:
+        # Cenas escuras preservam contraste; cenas claras ganham punch
+        v_curved = min(1.0, (v ** 0.78) * 1.15)
 
-            # Normalização pelo pico: multiplica todos os canais para que o mais forte alcance 255.0!
-            pure_max = max(r_pure, g_pure, b_pure)
-            if pure_max > 0:
-                scale = 255.0 / pure_max
-                r_out = r_pure * scale
-                g_out = g_pure * scale
-                b_out = b_pure * scale
-            else:
-                r_out, g_out, b_out = r, g, b
+        r_n, g_n, b_n = colorsys.hsv_to_rgb(h, s_curved, v_curved)
 
-        # Aplica proporcionalmente o slider de brilho configurado pelo usuário
-        final_r = int(round(r_out * self.brightness_factor))
-        final_g = int(round(g_out * self.brightness_factor))
-        final_b = int(round(b_out * self.brightness_factor))
+        # 3. Normalização proporcional de pico:
+        # Se for uma cor com brilho, empurra o canal dominante em direção ao teto de forma suave
+        peak = max(r_n, g_n, b_n)
+        if peak > 0.02:
+            gain = 1.0 + (1.0 / peak - 1.0) * (v_curved ** 0.5)
+            r_n = min(1.0, r_n * gain)
+            g_n = min(1.0, g_n * gain)
+            b_n = min(1.0, b_n * gain)
 
-        return max(0, min(255, final_r)), max(0, min(255, final_g)), max(0, min(255, final_b))
+        # Aplica o slider de brilho do usuário
+        final_r = r_n * 255.0 * self.brightness_factor
+        final_g = g_n * 255.0 * self.brightness_factor
+        final_b = b_n * 255.0 * self.brightness_factor
+
+        return final_r, final_g, final_b
 
     def run(self):
         self._running = True
@@ -117,42 +111,38 @@ class ScreenSyncWorker(QThread):
                 h = pix.height()
                 img = pix.toImage()
 
-                if self.sample_mode == "borders":
-                    # Pega as bordas onde a fita reflete na parede
-                    h_border = max(2, int(h * 0.15))
-                    w_border = max(2, int(w * 0.15))
+                # Amostragem Inteligente (Smart):
+                # Combina as bordas com o centro para nunca ficar cego ou sequestrado por barras de título
+                h_b = max(2, int(h * 0.18))
+                w_b = max(2, int(w * 0.18))
 
-                    top = img.copy(0, 0, w, h_border).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-                    left = img.copy(0, 0, w_border, h).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-                    right = img.copy(max(0, w - w_border), 0, w_border, h).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                top = img.copy(0, 0, w, h_b).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
+                left = img.copy(0, 0, w_b, h).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
+                right = img.copy(max(0, w - w_b), 0, w_b, h).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
+                center = img.copy(w_b, h_b, max(1, w - 2*w_b), max(1, h - 2*h_b)).scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
 
-                    c_top = top.pixelColor(0, 0)
-                    c_left = left.pixelColor(0, 0)
-                    c_right = right.pixelColor(0, 0)
+                # Ponderação: Topo 30%, Laterais 20% cada, Centro 30%
+                raw_r = top.red() * 0.30 + left.red() * 0.20 + right.red() * 0.20 + center.red() * 0.30
+                raw_g = top.green() * 0.30 + left.green() * 0.20 + right.green() * 0.20 + center.green() * 0.30
+                raw_b = top.blue() * 0.30 + left.blue() * 0.20 + right.blue() * 0.20 + center.blue() * 0.30
 
-                    # Topo tem peso duplo porque a barra superior é mais larga
-                    raw_r = (c_top.red() * 2.0 + c_left.red() + c_right.red()) / 4.0
-                    raw_g = (c_top.green() * 2.0 + c_left.green() + c_right.green()) / 4.0
-                    raw_b = (c_top.blue() * 2.0 + c_left.blue() + c_right.blue()) / 4.0
-                else:
-                    scaled = img.scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-                    c = scaled.pixelColor(0, 0)
-                    raw_r = float(c.red())
-                    raw_g = float(c.green())
-                    raw_b = float(c.blue())
+                # 1. Calcula a cor alvo processada (com realce de saturação e pico)
+                target_r, target_g, target_b = self._calculate_instant_color(raw_r, raw_g, raw_b)
 
-                # Suavização Orgânica (EMA)
+                # 2. Suavização Orgânica (EMA) realizada no sinal FINAL de saída:
+                # É isso que elimina completamente a sensação irritante de 'troca errada/nervosa'
                 if self._last_sent_rgb == (-1, -1, -1):
-                    self._cur_r, self._cur_g, self._cur_b = raw_r, raw_g, raw_b
+                    self._target_r, self._target_g, self._target_b = target_r, target_g, target_b
                 else:
-                    self._cur_r = self._cur_r + self.smoothing * (raw_r - self._cur_r)
-                    self._cur_g = self._cur_g + self.smoothing * (raw_g - self._cur_g)
-                    self._cur_b = self._cur_b + self.smoothing * (raw_b - self._cur_b)
+                    self._target_r = self._target_r + self.smoothing * (target_r - self._target_r)
+                    self._target_g = self._target_g + self.smoothing * (target_g - self._target_g)
+                    self._target_b = self._target_b + self.smoothing * (target_b - self._target_b)
 
-                # Processa a remoção do branco + esticamento para o brilho máximo
-                out_r, out_g, out_b = self._process_color_and_brightness(self._cur_r, self._cur_g, self._cur_b)
+                out_r = max(0, min(255, int(round(self._target_r))))
+                out_g = max(0, min(255, int(round(self._target_g))))
+                out_b = max(0, min(255, int(round(self._target_b))))
 
-                # Filtro Deadband: não polui o Bluetooth se a cor final na parede não mudou
+                # 3. Filtro Deadband: só transmite via BLE se houver mudança real
                 last_r, last_g, last_b = self._last_sent_rgb
                 delta = abs(out_r - last_r) + abs(out_g - last_g) + abs(out_b - last_b)
 
