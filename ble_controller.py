@@ -38,7 +38,13 @@ def load_settings() -> dict:
         # Calibração / Balanço de Cores do LED (R, G, B em %)
         "calib_r": 100,
         "calib_g": 60,
-        "calib_b": 75
+        "calib_b": 75,
+        # Configurações de Zonas do Ambilight
+        "amb_preset": "Fita no Teto",
+        "amb_w_top": 85,
+        "amb_w_sides": 15,
+        "amb_w_center": 25,
+        "amb_w_bottom": 0
     }
     if os.path.exists(CONFIG_FILE):
         try:

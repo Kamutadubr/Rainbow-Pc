@@ -269,12 +269,18 @@ class FlyoutWindow(QWidget):
         self._sched_timer.start()
         self._last_triggered_minute = ""
 
-        # Worker de sincronização de tela (Ambilight)
+        # Worker de sincronização de tela (Ambilight) com pesos de zona
+        amb_weights = {
+            "top": self.settings.get("amb_w_top", 85),
+            "sides": self.settings.get("amb_w_sides", 15),
+            "center": self.settings.get("amb_w_center", 25),
+            "bottom": self.settings.get("amb_w_bottom", 0)
+        }
         self.screen_worker = ScreenSyncWorker(
             fps=self.settings.get("ambilight_fps", 18),
-            smoothing=self.settings.get("ambilight_smoothing", 0.30),
-            deadband=self.settings.get("ambilight_deadband", 4),
-            mode=self.settings.get("ambilight_mode", "average"),
+            smoothing=self.settings.get("ambilight_smoothing", 0.22),
+            deadband=self.settings.get("ambilight_deadband", 3),
+            weights=amb_weights,
             parent=self
         )
         self.screen_worker.colorSampled.connect(self._on_ambilight_color)
@@ -636,6 +642,140 @@ class FlyoutWindow(QWidget):
         """)
         self.btn_toggle_amb.clicked.connect(self._toggle_ambilight)
         amb_vbox.addWidget(self.btn_toggle_amb)
+
+        # Botão discreto para abrir/fechar ajustes de zona
+        self.btn_toggle_zones = QPushButton("⚙ Zonas de Captura da Tela ▾")
+        self.btn_toggle_zones.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_zones.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #8E909B;
+                border: none;
+                font-size: 11px;
+                font-weight: 600;
+                font-family: 'Segoe UI';
+                padding: 4px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_toggle_zones.clicked.connect(self._toggle_zones_panel)
+        amb_vbox.addWidget(self.btn_toggle_zones)
+
+        # Painel recolhível de Zonas
+        self.zones_panel = QWidget()
+        zones_layout = QVBoxLayout(self.zones_panel)
+        zones_layout.setContentsMargins(4, 2, 4, 4)
+        zones_layout.setSpacing(6)
+
+        # Seletor de Presets
+        preset_row = QHBoxLayout()
+        lbl_pr = QLabel("Preset:")
+        lbl_pr.setStyleSheet("color: #8E909B; font-size: 11px; font-family: 'Segoe UI';")
+        self.cmb_amb_preset = QComboBox()
+        self.cmb_amb_preset.setStyleSheet("""
+            QComboBox {
+                background: rgba(255, 255, 255, 0.08);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-family: 'Segoe UI';
+            }
+            QComboBox QAbstractItemView {
+                background: #18191E;
+                color: #FFF;
+                selection-background-color: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        self.cmb_amb_preset.addItems(["Fita no Teto", "Atrás do Monitor", "Tela Inteira", "Personalizado"])
+        saved_pr = self.settings.get("amb_preset", "Fita no Teto")
+        idx_pr = self.cmb_amb_preset.findText(saved_pr)
+        if idx_pr >= 0:
+            self.cmb_amb_preset.setCurrentIndex(idx_pr)
+        self.cmb_amb_preset.currentTextChanged.connect(self._on_amb_preset_changed)
+        preset_row.addWidget(lbl_pr)
+        preset_row.addWidget(self.cmb_amb_preset)
+        zones_layout.addLayout(preset_row)
+
+        # 1. Slider Topo
+        top_row = QHBoxLayout()
+        lbl_top = QLabel("Topo")
+        lbl_top.setStyleSheet("color: #FFFFFF; font-size: 11px; font-family: 'Segoe UI'; min-width: 46px;")
+        self.lbl_top_val = QLabel(f"{self.settings.get('amb_w_top', 85)}%")
+        self.lbl_top_val.setStyleSheet("color: #8E909B; font-size: 10px; font-weight: 600; font-family: 'Segoe UI'; min-width: 32px;")
+        top_row.addWidget(lbl_top)
+        top_row.addStretch()
+        top_row.addWidget(self.lbl_top_val)
+        zones_layout.addLayout(top_row)
+
+        self.slider_amb_top = QSlider(Qt.Horizontal)
+        self.slider_amb_top.setRange(0, 100)
+        self.slider_amb_top.setValue(self.settings.get("amb_w_top", 85))
+        self.slider_amb_top.setStyleSheet(self._slider_style())
+        self.slider_amb_top.valueChanged.connect(self._on_zone_slider_changed)
+        zones_layout.addWidget(self.slider_amb_top)
+
+        # 2. Slider Laterais
+        sides_row = QHBoxLayout()
+        lbl_sides = QLabel("Laterais")
+        lbl_sides.setStyleSheet("color: #FFFFFF; font-size: 11px; font-family: 'Segoe UI'; min-width: 46px;")
+        self.lbl_sides_val = QLabel(f"{self.settings.get('amb_w_sides', 15)}%")
+        self.lbl_sides_val.setStyleSheet("color: #8E909B; font-size: 10px; font-weight: 600; font-family: 'Segoe UI'; min-width: 32px;")
+        sides_row.addWidget(lbl_sides)
+        sides_row.addStretch()
+        sides_row.addWidget(self.lbl_sides_val)
+        zones_layout.addLayout(sides_row)
+
+        self.slider_amb_sides = QSlider(Qt.Horizontal)
+        self.slider_amb_sides.setRange(0, 100)
+        self.slider_amb_sides.setValue(self.settings.get("amb_w_sides", 15))
+        self.slider_amb_sides.setStyleSheet(self._slider_style())
+        self.slider_amb_sides.valueChanged.connect(self._on_zone_slider_changed)
+        zones_layout.addWidget(self.slider_amb_sides)
+
+        # 3. Slider Centro
+        center_row = QHBoxLayout()
+        lbl_center = QLabel("Centro")
+        lbl_center.setStyleSheet("color: #FFFFFF; font-size: 11px; font-family: 'Segoe UI'; min-width: 46px;")
+        self.lbl_center_val = QLabel(f"{self.settings.get('amb_w_center', 25)}%")
+        self.lbl_center_val.setStyleSheet("color: #8E909B; font-size: 10px; font-weight: 600; font-family: 'Segoe UI'; min-width: 32px;")
+        center_row.addWidget(lbl_center)
+        center_row.addStretch()
+        center_row.addWidget(self.lbl_center_val)
+        zones_layout.addLayout(center_row)
+
+        self.slider_amb_center = QSlider(Qt.Horizontal)
+        self.slider_amb_center.setRange(0, 100)
+        self.slider_amb_center.setValue(self.settings.get("amb_w_center", 25))
+        self.slider_amb_center.setStyleSheet(self._slider_style())
+        self.slider_amb_center.valueChanged.connect(self._on_zone_slider_changed)
+        zones_layout.addWidget(self.slider_amb_center)
+
+        # 4. Slider Base/Chão
+        bottom_row = QHBoxLayout()
+        lbl_bottom = QLabel("Base")
+        lbl_bottom.setStyleSheet("color: #FFFFFF; font-size: 11px; font-family: 'Segoe UI'; min-width: 46px;")
+        self.lbl_bottom_val = QLabel(f"{self.settings.get('amb_w_bottom', 0)}%")
+        self.lbl_bottom_val.setStyleSheet("color: #8E909B; font-size: 10px; font-weight: 600; font-family: 'Segoe UI'; min-width: 32px;")
+        bottom_row.addWidget(lbl_bottom)
+        bottom_row.addStretch()
+        bottom_row.addWidget(self.lbl_bottom_val)
+        zones_layout.addLayout(bottom_row)
+
+        self.slider_amb_bottom = QSlider(Qt.Horizontal)
+        self.slider_amb_bottom.setRange(0, 100)
+        self.slider_amb_bottom.setValue(self.settings.get("amb_w_bottom", 0))
+        self.slider_amb_bottom.setStyleSheet(self._slider_style())
+        self.slider_amb_bottom.valueChanged.connect(self._on_zone_slider_changed)
+        zones_layout.addWidget(self.slider_amb_bottom)
+
+        # Inicialmente recolhido para não ocupar espaço
+        self.zones_panel.setVisible(False)
+        amb_vbox.addWidget(self.zones_panel)
 
         mode_vbox.addWidget(amb_frame)
 
@@ -1223,6 +1363,84 @@ class FlyoutWindow(QWidget):
                     color: #FFFFFF;
                 }
             """)
+
+    def _toggle_zones_panel(self):
+        is_visible = self.zones_panel.isVisible()
+        self.zones_panel.setVisible(not is_visible)
+        if not is_visible:
+            self.btn_toggle_zones.setText("⚙ Zonas de Captura da Tela ▴")
+        else:
+            self.btn_toggle_zones.setText("⚙ Zonas de Captura da Tela ▾")
+
+    def _on_amb_preset_changed(self, preset_name: str):
+        self.settings["amb_preset"] = preset_name
+        if preset_name == "Fita no Teto":
+            # 85% Topo, 15% Laterais, 25% Centro, 0% Base
+            self._set_zone_slider_values(85, 15, 25, 0)
+        elif preset_name == "Atrás do Monitor":
+            # 60% Topo, 60% Laterais, 20% Centro, 20% Base
+            self._set_zone_slider_values(60, 60, 20, 20)
+        elif preset_name == "Tela Inteira":
+            # Média equilibrada
+            self._set_zone_slider_values(40, 40, 50, 40)
+        save_settings(self.settings)
+
+    def _set_zone_slider_values(self, top: int, sides: int, center: int, bottom: int):
+        self.slider_amb_top.blockSignals(True)
+        self.slider_amb_sides.blockSignals(True)
+        self.slider_amb_center.blockSignals(True)
+        self.slider_amb_bottom.blockSignals(True)
+
+        self.slider_amb_top.setValue(top)
+        self.slider_amb_sides.setValue(sides)
+        self.slider_amb_center.setValue(center)
+        self.slider_amb_bottom.setValue(bottom)
+
+        self.lbl_top_val.setText(f"{top}%")
+        self.lbl_sides_val.setText(f"{sides}%")
+        self.lbl_center_val.setText(f"{center}%")
+        self.lbl_bottom_val.setText(f"{bottom}%")
+
+        self.slider_amb_top.blockSignals(False)
+        self.slider_amb_sides.blockSignals(False)
+        self.slider_amb_center.blockSignals(False)
+        self.slider_amb_bottom.blockSignals(False)
+
+        self._apply_zones_to_worker()
+
+    def _on_zone_slider_changed(self):
+        top = self.slider_amb_top.value()
+        sides = self.slider_amb_sides.value()
+        center = self.slider_amb_center.value()
+        bottom = self.slider_amb_bottom.value()
+
+        self.lbl_top_val.setText(f"{top}%")
+        self.lbl_sides_val.setText(f"{sides}%")
+        self.lbl_center_val.setText(f"{center}%")
+        self.lbl_bottom_val.setText(f"{bottom}%")
+
+        # Se mexeu nos sliders manualmente, muda preset para Personalizado
+        self.cmb_amb_preset.blockSignals(True)
+        self.cmb_amb_preset.setCurrentText("Personalizado")
+        self.cmb_amb_preset.blockSignals(False)
+        self.settings["amb_preset"] = "Personalizado"
+
+        self._apply_zones_to_worker()
+
+    def _apply_zones_to_worker(self):
+        top = self.slider_amb_top.value()
+        sides = self.slider_amb_sides.value()
+        center = self.slider_amb_center.value()
+        bottom = self.slider_amb_bottom.value()
+
+        self.settings["amb_w_top"] = top
+        self.settings["amb_w_sides"] = sides
+        self.settings["amb_w_center"] = center
+        self.settings["amb_w_bottom"] = bottom
+        save_settings(self.settings)
+
+        if hasattr(self, "screen_worker") and self.screen_worker:
+            self.screen_worker.set_zone_weights(top, sides, center, bottom)
 
     def _on_ambilight_color(self, r: int, g: int, b: int):
         if not self.is_ambilight_active:

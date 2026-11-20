@@ -3,11 +3,11 @@
   "name": "ELK-BLEDOM",
   "power": true,
   "color": [
-    27,
-    26,
-    32
+    70,
+    53,
+    117
   ],
-  "brightness": 100,
+  "brightness": 75,
   "mode": 148,
   "speed": 100,
   "timer_on_enabled": true,
@@ -19,7 +19,7 @@
   "sync_taskbar_color": true,
   "start_with_windows": true,
   "icon_glow": true,
-  "accent_theme": "Midnight",
+  "accent_theme": "OLED Black",
   "calib_r": 100,
   "calib_g": 100,
   "calib_b": 100
