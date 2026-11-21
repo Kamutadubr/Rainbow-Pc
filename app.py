@@ -508,11 +508,36 @@ class FlyoutWindow(QWidget):
         color_vbox.addSpacing(6)
         self.stack.addWidget(tab_color_widget)
 
-        # --- ABA 2: EFEITOS DINÂMICOS ---
+        # --- ABA 2: EFEITOS DINÂMICOS & AMBILIGHT ---
         tab_mode_widget = QWidget()
-        mode_vbox = QVBoxLayout(tab_mode_widget)
-        mode_vbox.setContentsMargins(4, 6, 4, 0)
-        mode_vbox.setSpacing(12)
+        tab_mode_widget.setStyleSheet("background: transparent;")
+
+        mode_scroll = QScrollArea()
+        mode_scroll.setWidgetResizable(True)
+        mode_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        mode_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        mode_scroll.setFrameShape(QFrame.NoFrame)
+        mode_scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 4px;
+                border-radius: 2px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 2px;
+                min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        mode_container = QWidget()
+        mode_container.setStyleSheet("background: transparent;")
+        mode_vbox = QVBoxLayout(mode_container)
+        mode_vbox.setContentsMargins(4, 4, 4, 0)
+        mode_vbox.setSpacing(10)
 
         lbl_mode_title = QLabel("Efeito Selecionado")
         lbl_mode_title.setStyleSheet("color: #8C8E9A; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-family: 'Segoe UI';")
@@ -780,6 +805,13 @@ class FlyoutWindow(QWidget):
         mode_vbox.addWidget(amb_frame)
 
         mode_vbox.addStretch()
+        mode_scroll.setWidget(mode_container)
+
+        mode_outer = QVBoxLayout(tab_mode_widget)
+        mode_outer.setContentsMargins(0, 0, 0, 0)
+        mode_outer.setSpacing(0)
+        mode_outer.addWidget(mode_scroll)
+
         self.stack.addWidget(tab_mode_widget)
 
         # --- ABA 3: HORÁRIOS / TIMERS ---
